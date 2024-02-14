@@ -1,11 +1,14 @@
 import json
+import torch
 from pathlib import Path
 from typing import Union
+from tqdm.auto import tqdm
 
-import torch
+
 import torchvision
 from PIL import Image
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 from torchvision.models import list_models, get_model
 from torchvision.models import ResNet18_Weights, ResNet50_Weights
 
@@ -65,14 +68,85 @@ def create_adversary(image: Union[torch.Tensor, Path],
         loss = F.nll_loss(pre_pertubed_pred, torch.tensor(target, dtype=torch.int64).to(device).unsqueeze(0))
         model.zero_grad
         loss.backward()
-        epsilon = 0.007
+        epsilon = 1
         image_gradient = transformed_image.grad.data
         perturbed_image = transformed_image - epsilon * image_gradient.sign()
         perturbed_image = torch.clamp(perturbed_image, 0, 1)
-        return img_label[model(perturbed_image).flatten().argmax().item()]
-        
+        return model(perturbed_image).flatten().argmax()
+def perturb_image(image, eta, max_eps):
+    eta = torch.clamp(eta, -max_eps, max_eps)
+    image = torch.clamp(image + eta, 0, 1)
+    return image
+
+def convert_tensor_to_PIL(backup: torch.Tensor, image: torch.Tensor):
+    ''' TODO: If an image has been transformed, reverse it.'''
+    transform = transforms.ToPILImage()
+    return transform(backup.squeeze(0)), transform(image.squeeze(0)) # Remove batch dimension
+
+def run_pgd(image: Union[Path, torch.Tensor], model: torch.nn.Module, target: str,  transform:callable=None, device:torch.device=None, max_eps=5e-4, MAX_ITERS=100):
+    '''
+    image: can be either a torch tensor (Should already be transformed for the corresponding model.),
+           OR it can be a path object to an image file in which case transform should be passed. 
+    target: string containing desired target class. Needs to be one of the Imagenet1K classes. 
+    transform: Callable, should accept a PIL as input and return a Pytorch Tensor compatible with your model of choice. 
+               Ignored if input is a tensor
+    device: if specified, will put the model and images on the torch.device
+    max_eps: float value between 0 and 1 - that's the maximum epsilon value for the perturbation.
+    MAX_ITERS: integer value, that's the maximum number of update steps to take before giving up. 
+    '''
+    if isinstance(image, Path):
+        image = Image.open(str(image))
+        if transform is None:
+            raise ValueError("Image is not a tensor and Transform not provided")
+        image = transform(image).to(device).unsqueeze(0)
+        toPil = transforms.ToPILImage()
+        toPil(image.squeeze(0)).save("before.jpeg")
+    
+    backup = image.clone()
+
+    target = torch.tensor(img_label.index(target), dtype=torch.int64).to(device).unsqueeze(0)
+    model.eval()
+    
+    model.requires_grad = False
+    random_initialization = torch.clamp(torch.rand_like(image), 0, 1)
+    eta_init = (max_eps * 0.5) * random_initialization
+    image = perturb_image(image, eta_init, max_eps)
+    for _ in tqdm(range(MAX_ITERS), total=MAX_ITERS):
+        image = image.clone().detach().requires_grad_(True)
+        model_pred = model(image)
+        if model_pred.argmax() == target:
+            return convert_tensor_to_PIL(backup, image)
+        loss = -F.cross_entropy(model_pred, target) # Minimize loss of target label
+        loss.backward()
+        eta = max_eps* torch.sign(image.grad)
+        image = perturb_image(image, eta, max_eps)
+    
+    print("Max iters reached, and adversarial attack was unsuccessful. Increase MAX_ITERS, or tweak max_eps")    
+    return convert_tensor_to_PIL(backup, image)
+
+
+
+
 if __name__=="__main__":
-    image = Path("/home/karmanya/Documents/repos/Leap/data/imagenette2-320/val/n01440764/ILSVRC2012_val_00009111.JPEG")
-    print(create_adversary(image=image, model_name="resnet18", target="stingray"))
+    
+    working_dir = Path(__file__).parent
+    image = working_dir / "data/imagenette2-320/val/n03445777/ILSVRC2012_val_00008161.JPEG"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = get_model("resnet18", weights="IMAGENET1K_V1")
+    model.to(device)
+    transform = model_transforms["resnet18"]()
+    backup, image = run_pgd(image, model, "goldfish", transform, device)
+    backup.save("backup.jpeg")
+    image.save("image.jpeg")
         
-        
+
+
+
+    
+
+
+
+    
+
+    
+    
