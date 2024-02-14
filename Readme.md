@@ -6,3 +6,7 @@ I tried 2 approaches first was the targeted fast gradient sign method, however, 
 I tested my approach with Resnet18 and Imagenette but it should work with any model pretrained on Imagenet. 
 
 test_adversary shows an example of how the function in main.py can be used - one caveat, the function returns a Tensor as an output - this is because I haven't correctly handled the transformation logic - at the moment, when an image is passed to the model, it gets transformed (Resized, Cropped and Normalized) to be compatible with Resnet18, and the perturbations are calculated relative to this transformed sample. If I had more time, I would change the function such that it writes to PIL and loads from disk at every iteration of PGD, that way, the perturbations will be robust to writing the image to disk and running through the input pipeline. 
+
+Download Imagenette from [here](https://github.com/fastai/imagenette?tab=readme-ov-file), untar and place under ./data to use test_adversary.py - or just use your own images. 
+
+I tested this on torchvision==0.17.0 and torch==2.2.0

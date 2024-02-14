@@ -27,6 +27,7 @@ def test_one_image():
     model.to(device)
     transform = ResNet18_Weights.IMAGENET1K_V1.transforms()
     perb_image = create_adversary(image, model, "goldfish", transform, device)
+    
     assert model(perb_image).argmax().cpu().item() == 1
     output_image_path = working_dir / "test_one_image.jpeg"
     perb_image_pil = convert_tensor_to_PIL(perb_image)
